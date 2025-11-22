@@ -54,7 +54,7 @@ pipeline {
                 script {
                     try {
                         // Start container
-                        sh "docker run -d --name ${CONTAINER_NAME}-test -p ${STUDENT_PORT}:${STUDENT_PORT} ${DOCKER_IMAGE}"
+                        sh "docker run -d --name ${CONTAINER_NAME}-test -p 8001:8001 ${DOCKER_IMAGE}"
                         sleep(20) // Give more time for container to start
                         
                         // Test basic connectivity

@@ -1,0 +1,47 @@
+{
+  "dashboard": {
+    "title": "GPU Service Monitoring",
+    "panels": [
+      {
+        "title": "GPU Memory Usage",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "gpu_memory_used_mb",
+            "legendFormat": "GPU {{gpu_id}}"
+          }
+        ]
+      },
+      {
+        "title": "GPU Utilization",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "gpu_utilization_percent",
+            "legendFormat": "GPU {{gpu_id}}"
+          }
+        ]
+      },
+      {
+        "title": "API Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(request_count_total[5m])",
+            "legendFormat": "{{method}} {{endpoint}}"
+          }
+        ]
+      },
+      {
+        "title": "Matrix Operation Latency",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "matrix_operation_seconds_bucket",
+            "legendFormat": "Matrix Addition"
+          }
+        ]
+      }
+    ]
+  }
+}
