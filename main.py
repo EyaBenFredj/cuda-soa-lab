@@ -146,6 +146,55 @@ def get_gpu_memory_info():
         # Fallback values
         return 512, 4096
 
+def load_npz_file_safely(file_content: bytes, filename: str):
+    """
+    Safely load NPZ file with comprehensive error handling
+    """
+    try:
+        with io.BytesIO(file_content) as buffer:
+            npz_data = np.load(buffer, allow_pickle=False)
+            
+            # Debug: Print available arrays
+            print(f"📁 NPZ file '{filename}' contains arrays: {npz_data.files}")
+            
+            # Try different strategies to extract the matrix
+            matrix = None
+            
+            # Strategy 1: Look for common keys
+            common_keys = ['arr_0', 'matrix', 'data', 'array', 'mat']
+            for key in common_keys:
+                if key in npz_data.files:
+                    matrix = npz_data[key]
+                    print(f"✅ Found matrix using key: '{key}' with shape {matrix.shape}")
+                    break
+            
+            # Strategy 2: Use first array if no common key found
+            if matrix is None and len(npz_data.files) > 0:
+                first_key = npz_data.files[0]
+                matrix = npz_data[first_key]
+                print(f"✅ Using first array '{first_key}' with shape {matrix.shape}")
+            
+            # Strategy 3: If still no matrix, try to find any 2D array
+            if matrix is None:
+                for key in npz_data.files:
+                    array = npz_data[key]
+                    if hasattr(array, 'shape') and len(array.shape) == 2:
+                        matrix = array
+                        print(f"✅ Found 2D array '{key}' with shape {matrix.shape}")
+                        break
+            
+            if matrix is None:
+                raise ValueError(f"No suitable 2D array found in NPZ file. Available arrays: {list(npz_data.files)}")
+            
+            # Ensure it's a proper 2D matrix
+            if len(matrix.shape) != 2:
+                raise ValueError(f"Expected 2D matrix, got array with shape {matrix.shape}")
+            
+            return matrix
+            
+    except Exception as e:
+        raise ValueError(f"Failed to load NPZ file '{filename}': {str(e)}")
+
 @app.get("/")
 async def root():
     """Root endpoint with service information"""
@@ -158,7 +207,8 @@ async def root():
             "health": "/health",
             "gpu_info": "/gpu-info",
             "add": "/add",
-            "metrics": "/metrics"
+            "metrics": "/metrics",
+            "test_data": "/test-data"
         }
     }
 
@@ -230,23 +280,18 @@ async def matrix_add(
         content_a = await file_a.read()
         content_b = await file_b.read()
         
-        # Load matrices from NPZ files
-        with io.BytesIO(content_a) as buffer_a, io.BytesIO(content_b) as buffer_b:
-            matrix_a_data = np.load(buffer_a)
-            matrix_b_data = np.load(buffer_b)
-            
-            # Extract arrays (handle different NPZ structures)
-            if 'arr_0' in matrix_a_data:
-                matrix_a = matrix_a_data['arr_0']
-                matrix_b = matrix_b_data['arr_0']
-            else:
-                # Get first array in file
-                matrix_a = matrix_a_data[matrix_a_data.files[0]]
-                matrix_b = matrix_b_data[matrix_b_data.files[0]]
+        print(f"📥 Processing files: {file_a.filename} ({len(content_a)} bytes), {file_b.filename} ({len(content_b)} bytes)")
+        
+        # Load matrices from NPZ files with safe loading
+        matrix_a = load_npz_file_safely(content_a, file_a.filename)
+        matrix_b = load_npz_file_safely(content_b, file_b.filename)
         
         # Ensure matrices are float32 for GPU computation
         matrix_a = matrix_a.astype(np.float32)
         matrix_b = matrix_b.astype(np.float32)
+        
+        print(f"📊 Matrix A shape: {matrix_a.shape}, dtype: {matrix_a.dtype}")
+        print(f"📊 Matrix B shape: {matrix_b.shape}, dtype: {matrix_b.dtype}")
         
         # Validate shapes
         if matrix_a.shape != matrix_b.shape:
@@ -281,6 +326,12 @@ async def matrix_add(
         used_memory = gpus[0]["memory_used_MB"] if gpus else 512
         total_memory = gpus[0]["memory_total_MB"] if gpus else 4096
         
+        # Verify the result
+        cpu_result = matrix_a + matrix_b
+        results_match = np.allclose(result_matrix, cpu_result, rtol=1e-5)
+        
+        print(f"✅ Addition completed: {rows}x{cols} matrices, GPU time: {gpu_time:.4f}s, Results match: {results_match}")
+        
         return {
             "matrix_shape": [int(rows), int(cols)],
             "total_elements": total_elements,
@@ -290,16 +341,76 @@ async def matrix_add(
             "gpu_memory_used_mb": used_memory,
             "gpu_memory_total_mb": total_memory,
             "gpu_utilization_percent": gpus[0]["utilization_percent"] if gpus else 0,
+            "results_verified": results_match,
             "environment": "windows" if IS_WINDOWS else "linux"
         }
         
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ Error in matrix addition: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Error processing matrices: {str(e)}"
         )
+
+@app.get("/test-data")
+async def create_test_data():
+    """
+    Create and return test NPZ files for demonstration
+    """
+    try:
+        # Create sample matrices
+        matrix_1 = np.random.rand(100, 100).astype(np.float32)
+        matrix_2 = np.random.rand(100, 100).astype(np.float32)
+        
+        # Save to bytes buffers
+        buffer_1 = io.BytesIO()
+        buffer_2 = io.BytesIO()
+        
+        np.savez(buffer_1, matrix_1)
+        np.savez(buffer_2, matrix_2)
+        
+        buffer_1.seek(0)
+        buffer_2.seek(0)
+        
+        return {
+            "message": "Test matrices created successfully",
+            "matrix_1_shape": matrix_1.shape,
+            "matrix_2_shape": matrix_2.shape,
+            "download_urls": {
+                "matrix_1": "/download/matrix1.npz",
+                "matrix_2": "/download/matrix2.npz"
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating test data: {str(e)}")
+
+@app.get("/download/{filename}")
+async def download_test_file(filename: str):
+    """
+    Download test NPZ files
+    """
+    if filename == "matrix1.npz":
+        matrix = np.random.rand(100, 100).astype(np.float32)
+    elif filename == "matrix2.npz":
+        matrix = np.random.rand(100, 100).astype(np.float32)
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    buffer = io.BytesIO()
+    np.savez(buffer, matrix)
+    buffer.seek(0)
+    
+    return JSONResponse(
+        content={"message": f"Downloading {filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Type": "application/octet-stream"
+        },
+        media_type="application/octet-stream"
+    )
 
 @app.get("/cuda-test")
 async def cuda_test():
@@ -309,16 +420,31 @@ async def cuda_test():
     try:
         if GPU_AVAILABLE:
             from numba import cuda
-            device_count = len(cuda.list_devices())
+            
+            # Get device info safely
+            device_count = 0
             device_info = []
             
-            for i in range(device_count):
-                device = cuda.select_device(i)
-                device_info.append({
-                    "device_id": i,
-                    "name": cuda.get_current_device().name,
-                    "compute_capability": cuda.get_current_device().compute_capability
-                })
+            try:
+                devices = cuda.list_devices()
+                device_count = len(devices)
+                
+                for i in range(device_count):
+                    with cuda.gpus[i]:
+                        device = cuda.get_current_device()
+                        device_info.append({
+                            "device_id": i,
+                            "name": device.name,
+                            "compute_capability": device.compute_capability
+                        })
+            except Exception as e:
+                print(f"⚠️  Error getting detailed device info: {e}")
+                device_count = 1
+                device_info = [{
+                    "device_id": 0,
+                    "name": "GPU (details unavailable)",
+                    "compute_capability": "Unknown"
+                }]
             
             return {
                 "cuda_available": True,
@@ -336,10 +462,41 @@ async def cuda_test():
             detail=f"CUDA test failed: {str(e)}"
         )
 
+@app.get("/simple-add")
+async def simple_matrix_add(size: int = 100):
+    """
+    Simple matrix addition test without file upload
+    Useful for quick testing
+    """
+    try:
+        # Create test matrices
+        matrix_a = np.random.rand(size, size).astype(np.float32)
+        matrix_b = np.random.rand(size, size).astype(np.float32)
+        
+        # Perform addition
+        start_time = time.perf_counter()
+        result = gpu_matrix_add(matrix_a, matrix_b)
+        computation_time = time.perf_counter() - start_time
+        
+        # Verify result
+        cpu_result = matrix_a + matrix_b
+        results_match = np.allclose(result, cpu_result, rtol=1e-5)
+        
+        return {
+            "matrix_size": f"{size}x{size}",
+            "computation_time": round(computation_time, 6),
+            "device": "GPU" if GPU_AVAILABLE else "CPU",
+            "results_verified": results_match,
+            "total_elements": size * size
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Simple add test failed: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8001"))
     
     print("🚀 Starting Enhanced GPU Matrix Addition Service")
     print("=" * 60)
@@ -351,6 +508,8 @@ if __name__ == "__main__":
     print(f"🎯 GPU Info: http://localhost:{port}/gpu-info")
     print(f"🧪 CUDA Test: http://localhost:{port}/cuda-test")
     print(f"➕ Matrix Add: http://localhost:{port}/add")
+    print(f"🔧 Simple Test: http://localhost:{port}/simple-add")
+    print(f"📁 Test Data: http://localhost:{port}/test-data")
     print("=" * 60)
     
     # Test GPU detection on startup
