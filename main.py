@@ -1,16 +1,19 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 import numpy as np
 import time
 import io
-from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 import os
 import sys
+import subprocess
+import json
+from prometheus_client import make_asgi_app, Counter, Histogram, Gauge
 
 # Initialize FastAPI app
 app = FastAPI(
     title="GPU Matrix Addition Microservice",
-    description="SOA Lab - GPU-accelerated matrix addition service",
-    version="1.0.0"
+    description="SOA Lab - GPU-accelerated matrix addition service with monitoring",
+    version="2.0.0"
 )
 
 # Prometheus metrics
@@ -20,13 +23,17 @@ app.mount("/metrics", metrics_app)
 # Custom metrics
 REQUEST_COUNT = Counter('request_count', 'Total request count', ['method', 'endpoint'])
 REQUEST_LATENCY = Histogram('request_latency_seconds', 'Request latency in seconds', ['endpoint'])
-GPU_MEMORY_USAGE = Gauge('gpu_memory_usage_mb', 'GPU Memory Usage in MB')
+GPU_MEMORY_USED = Gauge('gpu_memory_used_mb', 'GPU Memory Used in MB', ['gpu_id'])
+GPU_MEMORY_TOTAL = Gauge('gpu_memory_total_mb', 'GPU Memory Total in MB', ['gpu_id'])
+GPU_UTILIZATION = Gauge('gpu_utilization_percent', 'GPU Utilization Percentage', ['gpu_id'])
+GPU_TEMPERATURE = Gauge('gpu_temperature_c', 'GPU Temperature in Celsius', ['gpu_id'])
 MATRIX_SIZE = Gauge('matrix_size_elements', 'Number of elements in processed matrices')
+ACTIVE_GPU_COUNT = Gauge('active_gpu_count', 'Number of active GPUs')
 
 # Check if we're on Windows
 IS_WINDOWS = os.name == 'nt'
 
-# Try to import GPU libraries (will fail on Windows but that's OK)
+# Try to import GPU libraries
 GPU_AVAILABLE = False
 try:
     from numba import cuda
@@ -35,32 +42,37 @@ try:
     # CUDA kernel for matrix addition
     @cuda.jit
     def matrix_add_kernel(a, b, c):
+        """
+        CUDA Kernel for matrix addition
+        Each thread computes one element: c[i,j] = a[i,j] + b[i,j]
+        """
         i, j = cuda.grid(2)
         if i < c.shape[0] and j < c.shape[1]:
             c[i, j] = a[i, j] + b[i, j]
             
     def gpu_matrix_add(matrix_a, matrix_b):
-        """Perform matrix addition on GPU"""
+        """Perform matrix addition on GPU using Numba CUDA"""
         if matrix_a.shape != matrix_b.shape:
             raise ValueError("Matrix shapes must match")
         
         rows, cols = matrix_a.shape
         
-        # Copy matrices to GPU
+        # Copy matrices to GPU device memory
         d_matrix_a = cuda.to_device(matrix_a)
         d_matrix_b = cuda.to_device(matrix_b)
         d_result = cuda.device_array_like(matrix_a)
         
-        # Configure kernel launch
-        threads_per_block = (16, 16)
+        # Configure kernel launch parameters
+        threads_per_block = (16, 16)  # 256 threads per block
         blocks_per_grid_x = (rows + threads_per_block[0] - 1) // threads_per_block[0]
         blocks_per_grid_y = (cols + threads_per_block[1] - 1) // threads_per_block[1]
         blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
         
-        # Launch kernel
+        # Launch CUDA kernel
         matrix_add_kernel[blocks_per_grid, threads_per_block](d_matrix_a, d_matrix_b, d_result)
         cuda.synchronize()
         
+        # Copy result back to host
         return d_result.copy_to_host()
         
 except ImportError:
@@ -71,32 +83,80 @@ except ImportError:
         """CPU fallback for matrix addition"""
         return matrix_a + matrix_b
 
+def get_gpu_info():
+    """
+    Get GPU information using nvidia-smi
+    Returns detailed GPU information for /gpu-info endpoint
+    """
+    try:
+        # Run nvidia-smi to get comprehensive GPU info
+        result = subprocess.run([
+            'nvidia-smi',
+            '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,driver_version',
+            '--format=csv,noheader,nounits'
+        ], capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            gpus = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split(', ')
+                    if len(parts) >= 6:
+                        gpu_data = {
+                            "gpu": parts[0].strip(),
+                            "name": parts[1].strip(),
+                            "memory_used_MB": int(parts[2]),
+                            "memory_total_MB": int(parts[3]),
+                            "utilization_percent": int(parts[4]),
+                            "temperature_c": int(parts[5]),
+                            "driver_version": parts[6].strip() if len(parts) > 6 else "unknown"
+                        }
+                        gpus.append(gpu_data)
+            
+            # Update Prometheus metrics
+            ACTIVE_GPU_COUNT.set(len(gpus))
+            for gpu in gpus:
+                GPU_MEMORY_USED.labels(gpu_id=gpu["gpu"]).set(gpu["memory_used_MB"])
+                GPU_MEMORY_TOTAL.labels(gpu_id=gpu["gpu"]).set(gpu["memory_total_MB"])
+                GPU_UTILIZATION.labels(gpu_id=gpu["gpu"]).set(gpu["utilization_percent"])
+                GPU_TEMPERATURE.labels(gpu_id=gpu["gpu"]).set(gpu["temperature_c"])
+            
+            return gpus
+        else:
+            print(f"nvidia-smi failed: {result.stderr}")
+            return []
+            
+    except subprocess.TimeoutExpired:
+        print("nvidia-smi command timed out")
+        return []
+    except FileNotFoundError:
+        print("nvidia-smi not found")
+        return []
+    except Exception as e:
+        print(f"Error getting GPU info: {e}")
+        return []
+
 def get_gpu_memory_info():
-    """Get GPU memory info - mock for Windows"""
-    if IS_WINDOWS:
-        return 512, 4096  # Mock values for Windows
+    """Get GPU memory info for health endpoint"""
+    gpus = get_gpu_info()
+    if gpus:
+        # Return info for first GPU
+        return gpus[0]["memory_used_MB"], gpus[0]["memory_total_MB"]
     else:
-        # On Linux, try to get real GPU info
-        try:
-            import subprocess
-            result = subprocess.check_output([
-                'nvidia-smi', '--query-gpu=memory.used,memory.total',
-                '--format=csv,noheader,nounits'
-            ], text=True)
-            used, total = map(int, result.strip().split(', '))
-            return used, total
-        except:
-            return 1024, 8192  # Fallback mock values
+        # Fallback values
+        return 512, 4096
 
 @app.get("/")
 async def root():
+    """Root endpoint with service information"""
     return {
         "message": "GPU Matrix Addition Microservice",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "gpu_available": GPU_AVAILABLE,
         "environment": "windows" if IS_WINDOWS else "linux",
         "endpoints": {
             "health": "/health",
+            "gpu_info": "/gpu-info",
             "add": "/add",
             "metrics": "/metrics"
         }
@@ -104,32 +164,66 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    """Health check endpoint with system status"""
     REQUEST_COUNT.labels(method='GET', endpoint='/health').inc()
     
     used, total = get_gpu_memory_info()
+    gpus = get_gpu_info()
     
     return {
         "status": "ok",
+        "service": "GPU Matrix Addition",
         "gpu_available": GPU_AVAILABLE,
+        "active_gpus": len(gpus),
         "environment": "windows" if IS_WINDOWS else "linux",
         "gpu_info": {
             "memory_used_mb": used,
             "memory_total_mb": total,
-            "memory_usage_percent": (used / total) * 100
-        }
+            "memory_usage_percent": round((used / total) * 100, 2) if total > 0 else 0
+        },
+        "timestamp": time.time()
     }
+
+@app.get("/gpu-info")
+async def gpu_info_endpoint():
+    """
+    GPU information endpoint
+    Returns detailed information about all available GPUs
+    """
+    REQUEST_COUNT.labels(method='GET', endpoint='/gpu-info').inc()
+    
+    gpus = get_gpu_info()
+    
+    if gpus:
+        return {
+            "gpus": gpus,
+            "total_gpus": len(gpus),
+            "timestamp": time.time()
+        }
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail="GPU information not available. nvidia-smi may not be installed or accessible."
+        )
 
 @app.post("/add")
 async def matrix_add(
     file_a: UploadFile = File(..., description="First matrix in .npz format"),
     file_b: UploadFile = File(..., description="Second matrix in .npz format")
 ):
+    """
+    Matrix addition endpoint
+    Accepts two NPZ files and returns their sum computed on GPU
+    """
     REQUEST_COUNT.labels(method='POST', endpoint='/add').inc()
     start_time = time.perf_counter()
     
     # Validate file types
     if not file_a.filename.endswith('.npz') or not file_b.filename.endswith('.npz'):
-        raise HTTPException(status_code=400, detail="Both files must be in .npz format")
+        raise HTTPException(
+            status_code=400, 
+            detail="Both files must be in .npz format"
+        )
     
     try:
         # Read uploaded files
@@ -150,7 +244,7 @@ async def matrix_add(
                 matrix_a = matrix_a_data[matrix_a_data.files[0]]
                 matrix_b = matrix_b_data[matrix_b_data.files[0]]
         
-        # Ensure matrices are float32
+        # Ensure matrices are float32 for GPU computation
         matrix_a = matrix_a.astype(np.float32)
         matrix_b = matrix_b.astype(np.float32)
         
@@ -162,7 +256,15 @@ async def matrix_add(
             )
         
         rows, cols = matrix_a.shape
-        MATRIX_SIZE.set(rows * cols)
+        total_elements = rows * cols
+        MATRIX_SIZE.set(total_elements)
+        
+        # Check if matrices are too large
+        if total_elements > 10_000_000:  # 10M elements limit
+            raise HTTPException(
+                status_code=400,
+                detail=f"Matrix too large: {total_elements} elements. Maximum allowed: 10,000,000"
+            )
         
         # Perform matrix addition
         gpu_start_time = time.perf_counter()
@@ -174,66 +276,90 @@ async def matrix_add(
         # Update metrics
         REQUEST_LATENCY.labels(endpoint='/add').observe(total_time)
         
-        used_memory, total_memory = get_gpu_memory_info()
-        GPU_MEMORY_USAGE.set(used_memory)
+        # Get current GPU info for response
+        gpus = get_gpu_info()
+        used_memory = gpus[0]["memory_used_MB"] if gpus else 512
+        total_memory = gpus[0]["memory_total_MB"] if gpus else 4096
         
         return {
             "matrix_shape": [int(rows), int(cols)],
+            "total_elements": total_elements,
             "elapsed_time": round(total_time, 6),
             "gpu_computation_time": round(gpu_time, 6),
             "device": "GPU" if GPU_AVAILABLE else "CPU",
             "gpu_memory_used_mb": used_memory,
             "gpu_memory_total_mb": total_memory,
+            "gpu_utilization_percent": gpus[0]["utilization_percent"] if gpus else 0,
             "environment": "windows" if IS_WINDOWS else "linux"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing matrices: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing matrices: {str(e)}"
+        )
+
+@app.get("/cuda-test")
+async def cuda_test():
+    """Test endpoint to verify CUDA functionality"""
+    REQUEST_COUNT.labels(method='GET', endpoint='/cuda-test').inc()
     
-    # Add this function to your main.py
-def get_gpu_metrics():
-    """Get GPU metrics for Prometheus"""
     try:
-        import subprocess
-        # This will work on the instructor's server with nvidia-smi
-        result = subprocess.check_output([
-            'nvidia-smi', 
-            '--query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu',
-            '--format=csv,noheader,nounits'
-        ], text=True)
-        
-        # Parse the result
-        used_memory, total_memory, utilization, temperature = map(float, result.strip().split(', '))
-        
-        return {
-            'gpu_memory_used_mb': used_memory,
-            'gpu_memory_total_mb': total_memory,
-            'gpu_utilization_percent': utilization,
-            'gpu_temperature_c': temperature
-        }
-    except:
-        # Fallback for Windows/local development
-        return {
-            'gpu_memory_used_mb': 512,
-            'gpu_memory_total_mb': 4096,
-            'gpu_utilization_percent': 0,
-            'gpu_temperature_c': 35
-        }
+        if GPU_AVAILABLE:
+            from numba import cuda
+            device_count = len(cuda.list_devices())
+            device_info = []
+            
+            for i in range(device_count):
+                device = cuda.select_device(i)
+                device_info.append({
+                    "device_id": i,
+                    "name": cuda.get_current_device().name,
+                    "compute_capability": cuda.get_current_device().compute_capability
+                })
+            
+            return {
+                "cuda_available": True,
+                "device_count": device_count,
+                "devices": device_info
+            }
+        else:
+            return {
+                "cuda_available": False,
+                "message": "CUDA not available on this system"
+            }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"CUDA test failed: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn
     
     port = int(os.getenv("PORT", "8000"))
     
-    print("🚀 Starting GPU Matrix Addition Service")
-    print("=" * 50)
+    print("🚀 Starting Enhanced GPU Matrix Addition Service")
+    print("=" * 60)
     print(f"📍 Port: {port}")
     print(f"🎮 GPU Available: {GPU_AVAILABLE}")
     print(f"💻 Environment: {'Windows' if IS_WINDOWS else 'Linux'}")
     print(f"📊 Metrics: http://localhost:{port}/metrics")
     print(f"❤️  Health: http://localhost:{port}/health")
-    print("=" * 50)
+    print(f"🎯 GPU Info: http://localhost:{port}/gpu-info")
+    print(f"🧪 CUDA Test: http://localhost:{port}/cuda-test")
+    print(f"➕ Matrix Add: http://localhost:{port}/add")
+    print("=" * 60)
+    
+    # Test GPU detection on startup
+    gpus = get_gpu_info()
+    if gpus:
+        print(f"✅ Found {len(gpus)} GPU(s):")
+        for gpu in gpus:
+            print(f"   GPU {gpu['gpu']}: {gpu['name']} - {gpu['memory_used_MB']}/{gpu['memory_total_MB']} MB")
+    else:
+        print("⚠️  No GPUs detected or nvidia-smi not available")
     
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
