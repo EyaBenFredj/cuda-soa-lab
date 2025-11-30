@@ -73,11 +73,12 @@ python test_services.py
 # Terminal 2 - Client2  
 python client2.py
 <img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/5c02ccca-4c04-4f96-b658-1d88f311c366" />
-
-
 # Terminal 3 - Client3
 python client3.py
 <img width="885" height="132" alt="o3" src="https://github.com/user-attachments/assets/a29189ae-564a-4ed1-b3bd-4f8fd85b83e0" />
+
+
+
 
 # Terminal 4 - Aggregator
 python aggregator.py
