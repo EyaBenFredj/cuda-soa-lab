@@ -11,7 +11,6 @@
 | Aggregator | ✅ Running | 9000 |
 
 ### Federated Learning Results
-![Test Results](o5.png)
 
 *Successful federated learning round showing all services healthy and global model aggregation*
 
@@ -69,10 +68,12 @@ bash
 # Terminal 1 - Client1
 python client1.py
 python test_services.py
+<img width="911" height="170" alt="o1" src="https://github.com/user-attachments/assets/f7c86e5a-37ac-4cb8-b550-f0f150001718" />
 
 # Terminal 2 - Client2  
 python client2.py
-<img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/cd161939-2b2a-4d27-80b4-71ec9b547518" />
+<img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/5c02ccca-4c04-4f96-b658-1d88f311c366" />
+
 
 # Terminal 3 - Client3
 python client3.py
