@@ -3,15 +3,14 @@
 
 ### Service Deployment
 
-| Service | Status | Port | Screenshot |
-|---------|--------|------|------------|
-| Client1 | ✅ Running | 8001 | ![Client1](o1.png) |
-| Client2 | ✅ Running | 8002 | ![Client2](o2.png) |
-| Client3 | ✅ Running | 8003 | ![Client3](o3.png) |
-| Aggregator | ✅ Running | 9000 | ![Aggregator](o4.png) |
+| Service | Status | Port |
+|---------|--------|------|
+| Client1 | ✅ Running | 8001 |
+| Client2 | ✅ Running | 8002 | 
+| Client3 | ✅ Running | 8003 | 
+| Aggregator | ✅ Running | 9000 |
 
 ### Federated Learning Results
-![Test Results](o5.png)
 
 *Successful federated learning round showing all services healthy and global model aggregation*
 
@@ -64,19 +63,21 @@
 - Docker (optional)
 - Required packages: `fastapi`, `uvicorn`, `numba`, `numpy`, `requests`, `pydantic`
 
-### Method 1: Manual Service Start
-```bash
+### Method : Manual Service Start
+bash
 # Terminal 1 - Client1
 python client1.py
 python test_services.py
+<img width="911" height="170" alt="o1" src="https://github.com/user-attachments/assets/f7c86e5a-37ac-4cb8-b550-f0f150001718" />
 
 # Terminal 2 - Client2  
 python client2.py
-<img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/cd161939-2b2a-4d27-80b4-71ec9b547518" />
-
+<img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/5c02ccca-4c04-4f96-b658-1d88f311c366" />
 # Terminal 3 - Client3
-python client3.py
 <img width="885" height="132" alt="o3" src="https://github.com/user-attachments/assets/a29189ae-564a-4ed1-b3bd-4f8fd85b83e0" />
+
+
+
 
 # Terminal 4 - Aggregator
 python aggregator.py
