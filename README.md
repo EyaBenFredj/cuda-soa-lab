@@ -1,0 +1,87 @@
+
+## 📸 Implementation Evidence
+
+### Service Deployment
+
+| Service | Status | Port | Screenshot |
+|---------|--------|------|------------|
+| Client1 | ✅ Running | 8001 | ![Client1](o1.png) |
+| Client2 | ✅ Running | 8002 | ![Client2](o2.png) |
+| Client3 | ✅ Running | 8003 | ![Client3](o3.png) |
+| Aggregator | ✅ Running | 9000 | ![Aggregator](o4.png) |
+
+### Federated Learning Results
+![Test Results](o5.png)
+
+*Successful federated learning round showing all services healthy and global model aggregation*
+
+## 🔧 Technical Implementation
+
+### Core Components
+
+#### 1. Client Services (`client1.py`, `client2.py`, `client3.py`)
+- **Framework**: FastAPI microservices
+- **Model**: Linear regression (y = wx + b)
+- **Training**: Local SGD with manual gradient computation
+- **GPU Support**: Numba CUDA kernels (with CPU fallback)
+- **Endpoints**: 
+  - `POST /train` - Perform local training
+  - `GET /health` - Service health check
+
+#### 2. Aggregator Service (`aggregator.py`)
+- **Algorithm**: Federated Averaging
+- **Function**: Compute global model parameters
+- **Endpoints**:
+  - `POST /aggregate` - Combine client weights
+  - `GET /health` - Service status
+
+### 🧠 Federated Learning Process
+
+1. **Local Training**: Each client trains on its private synthetic data
+2. **Weight Sharing**: Clients send only model parameters (w, b) to aggregator
+3. **Aggregation**: Federated averaging: `w_global = average(w_clients)`
+4. **Privacy Preservation**: Raw data never leaves the clients
+
+## 📊 Results Analysis
+
+### Model Performance
+- **Theoretical Values**: w=3.5, b=2.0
+- **Achieved Global Model**: w=3.6362, b=1.1040
+- **Model Error**: w_error=0.1362, b_error=0.8960
+
+### Individual Client Results
+| Client | Weight (w) | Bias (b) |
+|--------|------------|----------|
+| Client1 | 3.5576 | 1.6570 |
+| Client2 | 3.8281 | -0.1798 |
+| Client3 | 3.5228 | 1.8348 |
+| **Global Model** | **3.6362** | **1.1040** |
+
+## 🚀 How to Run the System
+
+### Prerequisites
+- Python 3.8+
+- Docker (optional)
+- Required packages: `fastapi`, `uvicorn`, `numba`, `numpy`, `requests`, `pydantic`
+
+### Method 1: Manual Service Start
+```bash
+# Terminal 1 - Client1
+python client1.py
+python test_services.py
+
+# Terminal 2 - Client2  
+python client2.py
+<img width="931" height="146" alt="o2" src="https://github.com/user-attachments/assets/cd161939-2b2a-4d27-80b4-71ec9b547518" />
+
+# Terminal 3 - Client3
+python client3.py
+<img width="885" height="132" alt="o3" src="https://github.com/user-attachments/assets/a29189ae-564a-4ed1-b3bd-4f8fd85b83e0" />
+
+# Terminal 4 - Aggregator
+python aggregator.py
+<img width="906" height="143" alt="o4" src="https://github.com/user-attachments/assets/8ea7dd84-cc05-492c-bb9c-3a3f0365a71f" />
+
+# Terminal 5 - Testing
+python test_services.py
+<img width="1462" height="635" alt="o5" src="https://github.com/user-attachments/assets/40cbaada-0918-4b28-a677-c982485aee0d" />

@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  client1:
+    build: .
+    command: uvicorn client1:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  client2:
+    build: .
+    command: uvicorn client2:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8002:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  client3:
+    build: .
+    command: uvicorn client3:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8003:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  aggregator:
+    build: .
+    command: uvicorn aggregator:app --host 0.0.0.0 --port 9000 --reload
+    ports:
+      - "9000:9000"
+    depends_on:
+      - client1
+      - client2
+      - client3
+
+networks:
+  default:
+    name: federated-learning-network

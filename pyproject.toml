@@ -1,0 +1,16 @@
+[project]
+name = "cuda-soa-lab"
+version = "0.1.0"
+description = "A FastAPI app with Prometheus metrics and GPU support via Numba"
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+requires-python = ">=3.12, <3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "numpy",
+    "prometheus_client",
+    "numba-cuda[cu13]",
+    "python-multipart"
+]

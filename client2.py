@@ -1,0 +1,103 @@
+from fastapi import FastAPI
+import numpy as np
+from numba import cuda
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+w_local = np.random.randn()
+b_local = np.random.randn()
+
+@app.post("/train")
+async def train():
+    """Train linear regression model on local data and return weights"""
+    global w_local, b_local
+    
+    logger.info("Starting local training on client2...")
+    
+    # Generate synthetic data for client2 (different seed)
+    np.random.seed(43)
+    X = np.random.rand(1000, 1) * 10
+    y_true = 3.5 * X + 2.0 + np.random.randn(1000, 1) * 0.5
+    
+    w_local, b_local = train_linear_regression(X.flatten(), y_true.flatten())
+    
+    logger.info(f"Client2 training completed: w={w_local:.4f}, b={b_local:.4f}")
+    
+    return {"w": float(w_local), "b": float(b_local)}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "client": "client2"}
+
+def train_linear_regression(X, y, learning_rate=0.01, epochs=100):
+    """Train linear regression using GPU-accelerated gradient computation"""
+    w = np.random.randn()
+    b = np.random.randn()
+    
+    if not cuda.is_available():
+        logger.warning("CUDA not available, falling back to CPU")
+        return train_linear_regression_cpu(X, y, learning_rate, epochs)
+    
+    X_gpu = cuda.to_device(X.astype(np.float32))
+    y_gpu = cuda.to_device(y.astype(np.float32))
+    
+    for epoch in range(epochs):
+        grad_w, grad_b = compute_gradients_gpu(X_gpu, y_gpu, w, b)
+        w -= learning_rate * grad_w
+        b -= learning_rate * grad_b
+    
+    return w, b
+
+def train_linear_regression_cpu(X, y, learning_rate=0.01, epochs=100):
+    """CPU fallback implementation"""
+    w = np.random.randn()
+    b = np.random.randn()
+    N = len(X)
+    
+    for epoch in range(epochs):
+        y_pred = w * X + b
+        errors = y_pred - y
+        grad_w = np.dot(errors, X) / N
+        grad_b = np.sum(errors) / N
+        w -= learning_rate * grad_w
+        b -= learning_rate * grad_b
+    
+    return w, b
+
+@cuda.jit
+def gradient_kernel(X, y, w, b, grad_w, grad_b, N):
+    idx = cuda.grid(1)
+    
+    if idx < N:
+        y_pred = w * X[idx] + b
+        error = y_pred - y[idx]
+        local_grad_w = error * X[idx]
+        local_grad_b = error
+        
+        cuda.atomic.add(grad_w, 0, local_grad_w)
+        cuda.atomic.add(grad_b, 0, local_grad_b)
+
+def compute_gradients_gpu(X_gpu, y_gpu, w, b):
+    N = len(X_gpu)
+    grad_w = cuda.to_device(np.zeros(1, dtype=np.float32))
+    grad_b = cuda.to_device(np.zeros(1, dtype=np.float32))
+    
+    threads_per_block = 256
+    blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
+    
+    gradient_kernel[blocks_per_grid, threads_per_block](
+        X_gpu, y_gpu, w, b, grad_w, grad_b, N
+    )
+    
+    grad_w_cpu = grad_w.copy_to_host()[0] / N
+    grad_b_cpu = grad_b.copy_to_host()[0] / N
+    
+    return grad_w_cpu, grad_b_cpu
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002, log_level="info")
