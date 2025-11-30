@@ -5,10 +5,10 @@
 
 | Service | Status | Port | Screenshot |
 |---------|--------|------|------------|
-| Client1 | ✅ Running | 8001 | ![Client1](o1.png) |
-| Client2 | ✅ Running | 8002 | ![Client2](o2.png) |
-| Client3 | ✅ Running | 8003 | ![Client3](o3.png) |
-| Aggregator | ✅ Running | 9000 | ![Aggregator](o4.png) |
+| Client1 | ✅ Running | 8001 |
+| Client2 | ✅ Running | 8002 | 
+| Client3 | ✅ Running | 8003 | 
+| Aggregator | ✅ Running | 9000 |
 
 ### Federated Learning Results
 ![Test Results](o5.png)
@@ -65,7 +65,7 @@
 - Required packages: `fastapi`, `uvicorn`, `numba`, `numpy`, `requests`, `pydantic`
 
 ### Method 1: Manual Service Start
-```bash
+bash
 # Terminal 1 - Client1
 python client1.py
 python test_services.py
