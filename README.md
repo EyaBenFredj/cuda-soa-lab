@@ -3,8 +3,8 @@
 
 ### Service Deployment
 
-| Service | Status | Port | Screenshot |
-|---------|--------|------|------------|
+| Service | Status | Port |
+|---------|--------|------|
 | Client1 | ✅ Running | 8001 |
 | Client2 | ✅ Running | 8002 | 
 | Client3 | ✅ Running | 8003 | 
