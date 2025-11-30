@@ -63,7 +63,7 @@
 - Docker (optional)
 - Required packages: `fastapi`, `uvicorn`, `numba`, `numpy`, `requests`, `pydantic`
 
-### Method 1: Manual Service Start
+### Method : Manual Service Start
 bash
 # Terminal 1 - Client1
 python client1.py
